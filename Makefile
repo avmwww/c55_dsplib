@@ -11,14 +11,8 @@ SRCDIR = src
 INCLUDEDIR = include
 #*******************************************************************************
 SRCS =  fft.a55 \
-#	hann_window.c \
-	stretch.c \
-	window.c \
-	blackman_window.c \
-	denoiser.c \
 	gost.a55 \
 	gost.c \
-	speech.c
 
 #*******************************************************************************
 OUTS = $(patsubst %,$(OBJDIR)/%,$(filter %.o,$(OBJS)))

@@ -1,0 +1,10 @@
+.*
+*.o
+*.exe
+*.out
+*.map
+*.lst
+*.lib
+list/
+obj/
+*~
