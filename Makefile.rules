@@ -1,0 +1,81 @@
+##################################################################
+#   Makefile rules for ti tms320c55x dsp
+##################################################################
+#
+RM = rm -rf
+CP = cp -f
+MV = mv -p
+CAT = cat
+DD = dd
+
+# CG tools
+ASM = masm55
+CC  = cl55
+LNK = lnk55
+AR  = ar55
+HEX = hex55
+GZIPS = gzips
+MKDIR = mkdir -p
+#
+CONV = $(HEX) --boot --binary
+#
+CG55_BIN_DIR = $(shell dirname `which $(CC)`)
+CG55_DIR = $(shell dirname $(CG55_BIN_DIR))
+#
+DEVREV ?= 5509:E
+# C flags
+CFLAGS += -eo.o -ss -v$(DEVREV) -ml -ata -att -atc -o3
+CFLAGS += -i. -i$(INCLUDEDIR) -i$(CG55_DIR)/include
+CFLAGS += -fr$(OBJDIR) -fs$(LISTDIR)
+#CFLAGS += -I$(HOME)/.local/cgtools/include
+# ASM flags 
+#  -ma       : assert ARMS status bit is set
+#  -mb       : report bus conflicts as warnings
+#  -mc       : assert CPL status bit is set
+#  -mh       : port for speed over size
+#  -ml       : assert C54CM status bit is set
+#  -mk       : build compatible with C compiler large model
+#  -mn       : remove NOP in delay slots
+#  -mt       : assert SST status bit is zero
+#  -mv       : don't shrink [d]goto/[d]call P24 instructions
+AFLAGS += -mk -mc -ma -i. -i$(INCLUDEDIR)
+# Link flags
+LDFLAGS += -i$(CG55_DIR)/lib
+RTSLIB ?= -lrts55x.lib
+#
+OBJS = $(patsubst %.c,%.o,$(filter %.c,$(SRCS)))
+OBJS += $(patsubst %.a55,%_.o,$(filter %.a55,$(SRCS)))
+LIST = $(patsubst %.c,%.asm,$(filter %.c,$(SRCS)))
+DEPS = $(patsubst %.c,%.d,$(filter %.c,$(SRCS)))
+
+all_rules: $(OBJDIR) $(LISTDIR) $(OBJS) $(TARGET)
+
+clean_rules:
+	$(RM) $(OBJDIR) $(LISTDIR) $(TARGET)
+
+# All objects
+# Asm
+%_.o: %.a55
+	$(ASM) $(AFLAGS) $< $(OBJDIR)/$@
+# C
+%.o: %.c
+	$(CC) $(CFLAGS) $<
+
+# Create obj directory
+$(OBJDIR):
+	$(MKDIR) $(OBJDIR)
+
+# Create list directory
+$(LISTDIR):
+	$(MKDIR) $(LISTDIR)
+
+# Find objects in
+vpath %.o $(OBJDIR)
+# Find listing in
+vpath %.asm $(LISTDIR)
+#
+vpath %.c $(SRCDIR)
+vpath %.h $(INCLUDEDIR) $(SRCDIR)
+vpath %.a55 $(SRCDIR)
+
+.PHONY: all_rules clean_rules

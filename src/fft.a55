@@ -1,0 +1,631 @@
+;*******************************************************************************
+; FFT implementation for Texas DSP TMS320C55x
+; 11/14/2002
+; Andrey Mitrofanov
+; Speech Technology Center
+;*******************************************************************************
+; Buffers must be aligned by the number of elements
+; For example, if the number of elements is 256 = 0x100,
+; the lower 8 bits of the address = 0
+; In C it is necessary to use:
+; #pragma DATA_ALIGN (buffer, 256);
+;*******************************************************************************
+; void fft_forw(short *short_buff, long *long_buff, short *sin_buff, short exp);
+; size of sin_buff = (size of short_buff/4)
+; size of long_buff = size of short_buff = 2^exp
+; Input : Re[0],Re[1],...,Re[n-1].
+; Output: Re[0],Re[1],...,Re[n/2], Im[n/2-1],...,Im[1].
+;*******************************************************************************
+                .mmregs
+                .noremark 5571
+                .noremark 5573
+                .noremark 5673
+                .noremark 5688
+
+                .newblock
+                .global _fft_forw
+_fft_forw:
+                BSET ST1_M40
+                BSET ST1_FRCT
+                PSH T3, T2
+                || MOV T0, T2
+                PSHBOTH XAR7
+                PSHBOTH XAR6
+                PSHBOTH XAR5
+                MOV XAR1, XAR7
+                PSHBOTH XAR0
+;------------------------------------------- STAGE 1
+		MOV #1, AC0
+		SFTL AC0, T0
+		MOV AC0, T0
+		BCLR ST2_ARMS
+		.arms_off
+		SFTL T0, #-1
+		MOV T0, BRC0
+		SUB #1, mmap(BRC0)
+		RPTBLOCAL end_stage1?-1
+		 MOV *(AR0+T0B), AC0             ; xt = x[i]
+		 MOV *(AR0-T0B), AC1
+		 ADD *(AR0+T0B), AC1
+		 MOV AC1, dbl(*AR1+)             ; x[i] += x[i+1]
+		 SUB *(AR0+T0B), AC0
+		 MOV AC0, dbl(*AR1+)             ; x[i+1] = xt - x[i+1]
+end_stage1?:
+
+		BSET ST2_ARMS
+		.arms_on
+;------------------------------------------- STAGE 2
+		MOV XAR7, XAR0
+		MOV T2, T0
+		|| MOV #1, AC0
+		SUB #2, T0
+		SFTL AC0, T0
+		MOV mmap(AC0L), BRC0
+		SUB #1, mmap(BRC0)
+		RPTBLOCAL end_stage2?-1
+		 MOV dbl(*AR0), AC0
+		 MOV AC0, AC1
+		 ADD dbl(*+AR0(#4)), AC1
+		 MOV AC1, dbl(*+AR0(#-4))         ; ldata[i]  += ldata[i+2]
+		 SUB dbl(*+AR0(#4)), AC0
+		 MOV AC0, dbl(*AR0+)
+		 MOV dbl(*AR0), AC0
+		 NEG AC0
+		 MOV AC0, dbl(*AR0+)             ; ldata[i+3] = - ldata[i+3]
+end_stage2?:
+;------------------------------------------- STAGES 3,...,m
+                MOV #3, T3
+                ; T3 => k
+                ; T2 => m
+                ; AR6 => ak
+                MOV T2, T0
+                || MOV #1, AC0
+                SUB #2, T0
+                SFTL AC0, T0
+                MOV AC0, AR6               ; ak
+                MOV XAR2, XAR4             ; sin_buff
+stage3_loop?:
+                CMPU T3>T2, TC1 || NOP
+                BCC exit?, TC1
+                ;
+                MOV T2, T0
+                SUB T3, T0
+                || MOV #1, AC0
+                SFTL AC0, T0                ; 1<<(m-k)
+                MOV mmap(AC0L), BRC0
+                SUB #1, mmap(BRC0)
+                MOV AC0, T1                ; paw
+                ;
+                MOV #0, AR5
+           RPTB end_out_stage?-1
+                ;
+                ;MOV AC3, T1
+                MOV XAR7, XAR0
+                MOV XAR7, XAR1
+                MOV XAR7, XAR2
+                ;
+                MOV #2, AC0
+                SFTL AC0, T3               ; 1<<k
+                || MOV AR5, T0
+                AMAR *(AR0+T0)
+                ADD AC0, T0
+                || SFTL AC0, #-1           ; 1<<(k-1)
+                AMAR *(AR2+T0)             ; ldata[i+n1]
+                MOV AC0, T0                ; ldata[i+n2]
+                ADD AR5, T0
+                || SFTL AC0, #-1           ; 1<<(k-2)
+                AMAR *(AR1+T0)
+                ;
+                MOV AC0, T0                ; n4
+                || MOV #2, AC0
+                SFTL AC0, T3               ; 1<<k
+                ADD AC0, AR5               ; i += n1
+                ;---------------------------------------------------------------
+                SFTL T0, #-1
+                MOV mmap(T0), BRC1
+                SUB #2, mmap(BRC1)
+                SFTL T0, #1
+                MOV dbl(*AR1(T0)), AC0
+                NEG AC0
+                MOV AC0, dbl(*AR1(T0))
+                ;---------------------------------------------------------------
+                MOV XAR1, XAR3
+                MOV dbl(*AR0), AC0
+                ADD dbl(*AR1), AC0, AC1
+                MOV AC1, dbl(*AR0+)
+                SUB dbl(*AR1), AC0, AC1
+                MOV AC1, dbl(*AR1-)
+                AMAR *+AR2(#-2)        ; 9
+                AMAR *+AR3(#2)         ; 8
+                MOV AR6, T0
+                SUB T1, T0                ; ak -aw
+                ;
+                AMAR *(AR4+T0)
+                MOV T1, T0
+                ADD T1, T0
+                SUB AR6, T0                ; 2aw - ak
+                ;
+                RPTB end_int_stage?-1
+                 MOV XAR4, XCDP                     ; si[ak-aw]
+                 AMAR *AR3+                         ; low(lptr8)
+                 AMAR *AR2+                         ; low(lptr9)
+                  MPY uns(*AR3), *(CDP+T0), AC0    ; low(ldata[i3]) * si[ak-aw]
+                  :: MPY uns(*AR2), *(CDP+T0), AC1 ; low(ldata[i4]) * si[ak-aw]
+                  ;
+                  MAS uns(*AR3-), *CDP, AC1         ; low(ldata[i3]) * si[aw]
+                  :: MAC uns(*AR2-), *CDP, AC0      ; low(ldata[i4]) * si[aw]
+                  SFTS AC1, #-16
+                  ;
+                  MAS *AR3, *CDP, AC1               ; high(ldata[i3] * si[aw]
+                  :: MAC *AR2, *CDP, AC0>>#16       ; high(ldata[i4] * si[aw]
+                  ;
+                  MOV XAR4, XCDP
+                  ;
+                  MAC *AR3, *CDP, AC0               ; high(ldata[i3] * si[ak-aw]
+                  :: MAC *AR2, *CDP, AC1            ; high(ldata[i4] * si[ak-aw]
+                  ; ldata[i4]  = t2 + ldata[i2];
+                  ADD dbl(*AR1), AC1, AC2
+                  MOV AC2, dbl(*AR2-)
+                  ; ldata[i3]  = t2 - ldata[i2];
+                  SUB dbl(*AR1), AC1, AC2
+                  MOV AC2, dbl(*AR3+)
+                  ; ldata[i2]  = ldata[i1] - t1;
+                  SUB dbl(*AR0), AC0, AC2
+                  NEG AC2
+                  MOV AC2, dbl(*AR1-)
+                  ; ldata[i1] += t1;
+                  ADD dbl(*AR0), AC0, AC2
+                  MOV AC2, dbl(*AR0+)
+                  ; aw +=paw
+                  ADD T1, T0
+                  ADD T1, T0
+                  ASUB T1, AR4
+end_int_stage?:
+                ;
+end_out_stage?:
+                ;---------------------------------------------------------------
+                ADD #1, T3
+                || B stage3_loop?
+exit?:
+                ; Normalization
+                POPBOTH XAR0
+                MOV T2, T0
+                || MOV #1, AC0
+                SFTL AC0, T0
+                || NEG T2, T0
+                MOV mmap(AC0L), BRC0
+                SUB #1, mmap(BRC0)
+                RPTBLOCAL end_norm?-1
+                 MOV dbl(*AR7+), AC0
+                 SFTS AC0, T0
+                 MOV AC0, *AR0+
+end_norm?:
+                ;---------------------------------------------------------------
+                BCLR ST1_M40
+                BCLR ST1_FRCT
+                POPBOTH XAR5
+                POPBOTH XAR6
+                POPBOTH XAR7
+                POP T3, T2
+                RET
+;*******************************************************************************
+; void fft_rev(short *short_buff, long *long_buff, short *sin_buff, short exp);
+; size of sin_buff = (size of short_buff/4)
+; size of long_buff = size of short_buff = 2^exp
+; Input : Re[0],Re[1],...,Re[n/2], Im[n/2-1],...,Im[1].
+; Output: Re[0],Re[1],...,Re[n-1].
+;*******************************************************************************
+                .newblock
+                .global _fft_rev
+_fft_rev:
+                BSET ST1_M40
+                BSET ST1_FRCT
+                PSH T3, T2
+                || MOV T0, T2
+                ; T2 => m
+                PSHBOTH XAR7
+                PSHBOTH XAR6
+                PSHBOTH XAR5
+                PSHBOTH XAR0
+                MOV XAR1, XAR7
+                MOV XAR2, XAR4
+                ;
+                MOV #1, AC0
+                SFTL AC0, T0
+                MOV mmap(AC0L), BRC0
+                SUB #1, mmap(BRC0)
+                RPTBLOCAL end_move?-1
+                 MOV *AR0+, AC0
+                 MOV AC0, dbl(*AR1+)
+end_move?:
+                ; ak = n >> 2;
+                SUB #2, T2, T0
+                MOV #1, AC0
+                SFTL AC0, T0
+                MOV AC0, AR6
+                ; T3 => k
+                MOV #3, T3
+stage1_loop?:
+                CMPU T3>T2, TC1 || NOP
+                BCC pre_last?, TC1
+                MOV #1, AC0
+                MOV #0, AR5
+                ;
+                SUB #3, T3, T0       ; k-3
+                SFTL AC0, T0
+                MOV mmap(AC0L), BRC0
+                SUB #1, mmap(BRC0)
+               RPTB end_stage?-1
+                MOV XAR7, XAR0
+                MOV AR5, T0
+                AMAR *(AR0+T0)
+                MOV XAR0, XAR1
+                MOV XAR0, XAR2
+                MOV XAR0, XAR3
+                MOV #1, T0
+                ADD T2, T0
+                SUB T3, T0           ; m-k+1
+                || MOV #1, AC0
+                SFTL AC0, T0          ; n4 = 1 << (m-k+1)
+                MOV mmap(AC0L), BRC1
+                SFTL AC0, #1          ; to dbl
+                SUB #2, mmap(BRC1)
+                MOV AC0, T0           ; n4
+                || SFTL AC0, #1       ; n2 = 1 << (m-k+2)
+                AMAR *(AR3+T0)
+                AMAR *(AR2+T0)
+                MOV AC0, T0           ; n2
+                || SFTL AC0, #1       ; n1 = 1 << (m-k+3)
+                AMAR *(AR3+T0)
+                AMAR *(AR1+T0)
+                MOV AC0, T0            ; n1
+                ;
+                MOV dbl(*AR0), AC0
+                ADD dbl(*AR1), AC0, AC1
+                MOV AC1, dbl(*AR0+)
+                SUB dbl(*AR1), AC0, AC1
+                MOV AC1, dbl(*AR1)
+                MOV dbl(*AR2), AC0
+                ADD AC0, AC0
+                MOV AC0, dbl(*AR2)
+                MOV dbl(*AR3), AC0
+                SFTS AC0, #1
+                NEG AC0
+                MOV AC0, dbl(*AR3)
+                ;
+                MOV XAR1, XAR2
+                AMAR *+AR1(#-2)
+                AMAR *+AR2(#2)
+                MOV XAR7, XAR3
+                ADD AR5, T0
+                AMAR *(AR3+T0)
+                AMAR *+AR3(#-2)
+                MOV T0, AR5           ; +n1
+                ||MOV #1, AC0
+                SUB #3, T3, T0
+                SFTL AC0, T0
+                MOV AC0, T1           ; paw
+                MOV T1, T0            ; aw
+                AMAR *(AR4+T0)
+                MOV AR6, T0
+                SUB T1, T0
+                SUB T1, T0                 ; ak - 2aw
+               RPTB end_int_stage?-1
+                ;
+                MOV dbl(*AR2), AC0
+                NEG AC0
+                MOV AC0, dbl(*AR2)
+                AMAR *AR0+
+                AMAR *AR1+
+                AMAR *AR2+
+                AMAR *AR3+
+                MOV XAR4, XCDP
+                ;
+                MPY uns(*AR2-), *CDP, AC0
+                :: MPY uns(*AR0-), *CDP, AC1
+                MAS uns(*AR3-), *CDP, AC0
+                :: MAS uns(*AR1-), *CDP, AC1
+                MAC *AR2+, *CDP, AC0>>#16
+                :: MAC *AR0+, *CDP, AC1>>#16
+                MAS *AR3+, *(CDP+T0), AC0
+                :: MAS *AR1+, *(CDP+T0), AC1
+                ;
+                MPY uns(*AR0-), *CDP, AC2
+                :: MPY uns(*AR2-), *CDP, AC3
+                MAS uns(*AR1-), *CDP, AC2
+                :: MAS uns(*AR3-), *CDP, AC3
+                MAC *AR0, *CDP, AC2>>#16
+                :: MAC *AR2, *CDP, AC3>>#16
+                MAS *AR1, *CDP, AC2
+                :: MAS *AR3, *CDP, AC3
+                ;
+                ADD AC2, AC0       ; t2
+                SUB AC3, AC1       ; t1
+                || MOV dbl(*AR0), AC2
+                ADD dbl(*AR1), AC2
+                MOV AC2, dbl(*AR0+)
+                MOV dbl(*AR2), AC2
+                ADD dbl(*AR3), AC2
+                MOV AC2, dbl(*AR1-)
+                MOV AC0, dbl(*AR2+)
+                MOV AC1, dbl(*AR3-)
+                ; aw +=paw
+                MOV XAR4, XCDP
+                SUB T1, T0
+                SUB T1, T0
+                AADD T1, AR4
+end_int_stage?:
+                ASUB AR6, AR4
+end_stage?:                
+                ;
+                ADD #1, T3
+                || B stage1_loop?
+pre_last?:
+                ; Pre last stage
+                BCLR ST1_FRCT
+                MOV XAR7, XAR0
+                SUB #2, T2, T0
+      		MOV #1, AC0
+		SFTL AC0, T0
+		MOV mmap(AC0L), BRC0
+		SUB #1, mmap(BRC0)
+		RPTBLOCAL end_pre_stage?-1
+                 MOV dbl(*AR0), AC0
+                 ADD dbl(*AR0(short(#4))), AC0, AC1
+                 MOV AC1, dbl(*AR0)
+                 SUB dbl(*AR0(short(#4))), AC0
+                 MOV AC0, dbl(*AR0(short(#4)))
+                 MPYMK *AR0(short(#6)), #-2, AC0
+                 SFTL AC0, #16
+                 MACMK *AR0(short(#7)), #-2, AC0
+                 MOV AC0, dbl(*AR0(short(#6)))
+                 MOV dbl(*AR0(short(#2))), AC0
+                 ADD AC0, AC0
+                 MOV AC0, dbl(*AR0(short(#2)))
+                 AMAR *+AR0(#8)
+end_pre_stage?:
+                POPBOTH XAR1
+                MOV XAR7, XAR0
+                BSET ST1_FRCT
+                SUB #1, T2, T0
+                MOV #0x7FEE, T1
+      		MOV #1, AC0
+		SFTL AC0, T0
+		MOV AC0, T0
+		MOV mmap(T0), BRC0
+		BCLR ST2_ARMS
+		.arms_off
+		SUB #1, mmap(BRC0)
+		; Norm coeff
+		RPTBLOCAL end_last_stage?-1
+		 MOV dbl(*AR0+), AC0
+		 ADD dbl(*AR0-), AC0, AC1
+		 ;
+		 MOV AC1, dbl(*AR0+)
+		 ;
+		 MPYMU mmap(AC1L), T1, AC2
+		 SFTL AC2, #-16
+		 MACM mmap(AC1H), T1, AC2
+		 MOV AC2, *(AR1+T0B)
+		 ;
+		 ;MOV AC1, *(AR1+T0B)
+		 SUB dbl(*AR0), AC0
+		 ;
+		 MPYMU mmap(AC0L), T1, AC2
+		 SFTL AC2, #-16
+		 MACM mmap(AC0H), T1, AC2
+		 MOV AC2, *(AR1+T0B)
+		 ;
+		 ;MOV AC0, *(AR1+T0B)
+		 MOV AC0, dbl(*AR0+)
+end_last_stage?:
+		BSET ST2_ARMS
+		.arms_on
+                POPBOTH XAR5
+                POPBOTH XAR6
+                POPBOTH XAR7
+                POP T3, T2
+                BCLR ST1_M40
+                BCLR ST1_FRCT
+                RET
+;*******************************************************************************
+; Definition of the twiddle factor array.
+; Output: si[i], i = 0,1,...,n/4-1
+; void fft_twiddle(short *si, short range);
+;*******************************************************************************
+                .newblock
+                .global _fft_twiddle
+_fft_twiddle:
+      		PSH T3, T2
+      		PSHBOTH XAR5
+      		PSHBOTH XAR6
+      		MOV XAR0, XAR5
+      		MOV #1, AC0
+		SFTL AC0, T0
+		SFTL AC0, #-2
+		MOV AC0, T2
+		NEG T0, T3
+		MOV #1<<#16, AC0
+;		OR #0x8000, AC0
+		SFTL AC0, T3
+		MOV AC0, T3
+		MOV #0, AR6
+loop?:
+		BCC exit?, T2<=#0
+		|| SUB #1, T2
+		MOV AR6, T0
+		|| CALL #_sin_short
+		MOV T0, *AR5+
+		ADD T3, AR6
+		|| B loop?
+exit?:
+                POPBOTH XAR6
+                POPBOTH XAR5
+                POP T3, T2
+                RET
+;*******************************************************************************
+; void fft_module(short *x, short range);
+;*******************************************************************************
+                 .newblock
+                 .global _fft_module
+_fft_module:
+                PSHBOTH XAR5
+                PSHBOTH XAR6
+                PSH T2
+                AADD #-6, SP
+                MOV XAR0, XAR6
+                MOV XAR0, XAR5
+                MOV #1, AC0
+                SFTL AC0, T0
+                ; n - 1
+                SUB #1, AC0, T0
+                ; n/2
+                SFTL AC0, #-1
+                MOV AC0, T2
+                AMAR *(AR6+T0)
+                MOV *AR5, T1
+                ABS T1
+                MOV T1, *AR5+
+loop?:                
+                BCC exit?, T2==#0
+                SQRM *AR5, AC0
+                SQAM *AR6-, AC0, AC0
+                ; sqrt(re^2+im^2)
+                MOV AC0, AC1
+                ; l
+                MOV AC0, dbl(*SP(#0))
+sqrt?:                
+                ; rslt
+                MOV AC0, dbl(*SP(#4))
+                ; l
+                MOV dbl(*SP(#0)), AC0
+                ; div
+                MOV AC1, dbl(*SP(#2))
+                ; div = (l / div + div) / 2;
+                CALL #__divli
+                ADD dbl(*SP(#2)), AC0
+                MOV dbl(*SP(#4)), AC1
+                SFTS AC0, #-1
+                CMP AC1>AC0, TC1 || NOP
+                ; div
+                MOV AC0, AC1
+                || BCC sqrt?, TC1
+                MOV dbl(*SP(#4)), AC0
+                MOV AC0, *AR5+ 
+                SUB #1, T2
+                || B loop?
+exit?:	
+                AADD #6, SP
+                POP T2
+                POPBOTH XAR6
+                POPBOTH XAR5
+                RET
+;*******************************************************************************
+; void fft_module_power(short *x, short range);
+;*******************************************************************************
+                 .newblock
+                 .global _fft_module_power
+_fft_module_power:
+                BSET ST1_FRCT
+                MOV XAR0, XAR1
+                MOV #1, AC0
+                SFTL AC0, T0
+                ; n - 1
+                SUB #1, AC0, T0
+                ; n/2
+                SFTL AC0, #-1
+                SUB #2, AC0
+                MOV AC0, mmap(BRC0)
+                AMAR *(AR1+T0)
+                SQRM *AR0, AC0
+                MOV HI(AC0), *AR0+
+                RPTBLOCAL end_buf?-1
+                 ; re^2 + im^2
+                 SQRM *AR0, AC0
+                 SQAM *AR1-, AC0, AC0
+                 MOV HI(AC0), *AR0+
+end_buf?:
+                BCLR ST1_FRCT
+                RET
+;*******************************************************************************
+                 .newblock
+                 .global _sin_short
+_sin_short:
+                 MOV #1, AR3
+                 XCCPART T0<#0
+                 || MOV #-1, AR3
+                 XCCPART T0<#0
+                 || NEG T0
+                 AND #0x7FFF, T0
+                 ;---------------------------
+                 MOV #0x4000, AR1
+                 CMPU T0>=AR1, TC1 || NOP
+                 AND #0x3FFF, T0
+                 XCCPART TC1
+                 || SUB T0, AR1
+                 XCCPART TC1
+                 || MOV AR1, T0
+                 ;MOV #0x4000, AR4
+                 ;MOV #0x2000, AR1
+                 ;CMPU T0>=AR1, TC1 || NOP
+                 ;XCCPART TC1
+                 ;|| SUB T0, AR4
+                 ;XCCPART TC1
+                 ;|| MOV AR4, T0
+                 ;---------------------------
+                 MOV uns(mmap(T0))<<#-6, AC0
+                 MOV T0, T1
+                 AND #0xFFC0, T0
+                 SUB T0, T1
+                 MOV AC0, T0
+                 AMOV #sinuse_tab, XAR2
+                 AMAR *(AR2+T0)
+                 MOV uns(*AR2(short(#1))), AC0
+                 SUB uns(*AR2), AC0
+                 SFTL AC0, #11
+                 MPY T1, AC0
+                 ADD *AR2, AC0
+                 MOV AC0, T0
+                 MPYM mmap(AR3), T0, AC0
+                 MOV AC0, T0
+                 RET
+;*******************************************************************************
+;*******************************************************************************
+sinuse_tab:
+    .word 0x0000,0x00C9,0x0192,0x025B,0x0324,0x03ED,0x04B6,0x057F
+    .word 0x0647,0x0710,0x07D9,0x08A2,0x096A,0x0A33,0x0AFB,0x0BC3
+    .word 0x0C8B,0x0D53,0x0E1B,0x0EE3,0x0FAB,0x1072,0x1139,0x1201
+    .word 0x12C8,0x138E,0x1455,0x151B,0x15E2,0x16A8,0x176D,0x1833
+    .word 0x18F8,0x19BD,0x1A82,0x1B47,0x1C0B,0x1CCF,0x1D93,0x1E56
+    .word 0x1F19,0x1FDC,0x209F,0x2161,0x2223,0x22E5,0x23A6,0x2467
+    .word 0x2528,0x25E8,0x26A8,0x2767,0x2826,0x28E5,0x29A3,0x2A61
+    .word 0x2B1F,0x2BDC,0x2C98,0x2D55,0x2E11,0x2ECC,0x2F87,0x3041
+    .word 0x30FB,0x31B5,0x326E,0x3326,0x33DE,0x3496,0x354D,0x3604
+    .word 0x36BA,0x376F,0x3824,0x38D8,0x398C,0x3A40,0x3AF2,0x3BA5
+    .word 0x3C56,0x3D07,0x3DB8,0x3E68,0x3F17,0x3FC5,0x4073,0x4121
+    .word 0x41CE,0x427A,0x4325,0x43D0,0x447A,0x4524,0x45CD,0x4675
+    .word 0x471C,0x47C3,0x4869,0x490F,0x49B4,0x4A58,0x4AFB,0x4B9E
+    .word 0x4C3F,0x4CE1,0x4D81,0x4E21,0x4EBF,0x4F5E,0x4FFB,0x5097
+    .word 0x5133,0x51CE,0x5269,0x5302,0x539B,0x5433,0x54CA,0x5560
+    .word 0x55F5,0x568A,0x571D,0x57B0,0x5842,0x58D4,0x5964,0x59F3
+    .word 0x5A82,0x5B10,0x5B9D,0x5C29,0x5CB4,0x5D3E,0x5DC7,0x5E50
+    .word 0x5ED7,0x5F5E,0x5FE3,0x6068,0x60EC,0x616F,0x61F1,0x6271
+    .word 0x62F2,0x6371,0x63EF,0x646C,0x64E8,0x6563,0x65DD,0x6657
+    .word 0x66CF,0x6746,0x67BD,0x6832,0x68A6,0x6919,0x698C,0x69FD
+    .word 0x6A6D,0x6ADC,0x6B4A,0x6BB8,0x6C24,0x6C8F,0x6CF9,0x6D62
+    .word 0x6DCA,0x6E30,0x6E96,0x6EFB,0x6F5F,0x6FC1,0x7023,0x7083
+    .word 0x70E2,0x7141,0x719E,0x71FA,0x7255,0x72AF,0x7307,0x735F
+    .word 0x73B5,0x740B,0x745F,0x74B2,0x7504,0x7555,0x75A5,0x75F4
+    .word 0x7641,0x768E,0x76D9,0x7723,0x776C,0x77B4,0x77FA,0x7840
+    .word 0x7884,0x78C7,0x7909,0x794A,0x798A,0x79C8,0x7A05,0x7A42
+    .word 0x7A7D,0x7AB6,0x7AEF,0x7B26,0x7B5D,0x7B92,0x7BC5,0x7BF8
+    .word 0x7C29,0x7C5A,0x7C89,0x7CB7,0x7CE3,0x7D0F,0x7D39,0x7D62
+    .word 0x7D8A,0x7DB0,0x7DD6,0x7DFA,0x7E1D,0x7E3F,0x7E5F,0x7E7F
+    .word 0x7E9D,0x7EBA,0x7ED5,0x7EF0,0x7F09,0x7F21,0x7F38,0x7F4D
+    .word 0x7F62,0x7F75,0x7F87,0x7F97,0x7FA7,0x7FB5,0x7FC2,0x7FCE
+    .word 0x7FD8,0x7FE1,0x7FE9,0x7FF0,0x7FF6,0x7FFA,0x7FFD,0x7FFF
+    .word 0x7FFF,0x7FFF
+;*******************************************************************************
+                      .ref __divli
+                      .end
+                      
