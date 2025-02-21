@@ -13,6 +13,8 @@ INCLUDEDIR = include
 SRCS =  fft.a55 \
 	gost.a55 \
 	gost.c \
+	math_dsp.a55 \
+	denoiser.c \
 
 #*******************************************************************************
 OUTS = $(patsubst %,$(OBJDIR)/%,$(filter %.o,$(OBJS)))
