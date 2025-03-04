@@ -1,0 +1,309 @@
+        .mmregs
+        .noremark 5688
+        .noremark 5684
+
+;******************************************************************************
+; word32 f(word32 x);
+;
+;	x = k87[x>>24 & 255] << 24 | k65[x>>16 & 255] << 16 |
+;	    k43[x>> 8 & 255] <<  8 | k21[x & 255];
+;	return x<<11 | x>>(32-11);
+;******************************************************************************
+; Basic function of the algorithm GOST 28147 Implemented as a macro
+; x   -> AC0
+; k87 -> XAR1
+; k65 -> XAR2
+; k43 -> XAR3
+; k21 -> XAR4
+; результат в AC2
+__F_BASE__  .macro
+	;x = k87[x>>24 & 255] << 24 | k65[x>>16 & 255] << 16 |
+	;    k43[x>> 8 & 255] <<  8 | k21[x & 255];
+        ; k87[x>>24 & 255] << 24
+        SFTL AC0, #-24, AC2
+        AND #0x00FF, AC2, T0
+        || SFTL AC0, #-16, AC2
+        MOV *AR1(T0)<<#24, AC1
+        ; k65[x>>16 & 255] << 16
+        AND #0x00FF, AC2, T0
+        MOV *AR2(T0)<<#16, AC2
+        OR AC2, AC1
+        ; k43[x>> 8 & 255] <<  8
+        BFXTR #0xFF00, AC0, T0
+        MOV *AR3(T0)<<#8, AC2
+        OR AC2, AC1
+        ; k21[x & 255]
+        AND #0x00FF, AC0, T0
+        OR *AR4(T0), AC1
+        ; return x<<11 | x>>(32-11)
+        SFTL AC1, #11, AC2
+        OR AC1<<#-21, AC2
+        .endm
+
+        .text
+;*******************************************************************************
+; void gostcrypt(word32 const *in, word32 const *k81,
+;                word32 *out, word32 const *key)
+;
+; Cryptographic algorithm GOST 28147 in simple replacement mode
+;*******************************************************************************
+        .newblock
+        .global _gostcrypt
+_gostcrypt:
+        PSHBOTH XAR5
+        PSHBOTH XAR6
+        MOV XAR2, XAR5
+        MOV XAR3, XAR6
+        NOP
+        NOP
+        NOP
+        AMAR *AR1(#256), XAR2
+        AMAR *AR2(#256), XAR3
+        AMAR *AR3(#256), XAR4
+
+        MOV dbl(*AR0), AC0
+        MOV AC0, dbl(*AR5)
+        MOV dbl(*AR0(short(#2))), AC3
+        MOV #2, BRC0
+        RPTB end_block?-1
+         ; n2 ^= f(n1+key[0])
+         ADD dbl(*AR6), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ; n1 ^= f(n2+key[1])
+         ADD dbl(*AR6(short(#2))), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ; n2 ^= f(n1+key[2])
+         ADD dbl(*AR6(short(#4))), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[3])
+         ADD dbl(*AR6(short(#6))), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ;n2 ^= f(n1+key[4])
+         ADD dbl(*AR6(#8)), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[5])
+         ADD dbl(*AR6(#10)), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ;n2 ^= f(n1+key[6])
+         ADD dbl(*AR6(#12)), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[7])
+         ADD dbl(*AR6(#14)), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+end_block?:
+        ;-----------------------------------------------------------------------
+        ;n2 ^= f(n1+key[7]);
+        ADD dbl(*AR6(#14)), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[6]);
+        ADD dbl(*AR6(#12)), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[5]);
+        ADD dbl(*AR6(#10)), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[4]);
+        ADD dbl(*AR6(#8)), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[3]);
+        ADD dbl(*AR6(short(#6))), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[2]);
+        ADD dbl(*AR6(short(#4))), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[1]);
+        ADD dbl(*AR6(short(#2))), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[0]);
+        ADD dbl(*AR6), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        ;out[0] = n2
+        ;out[1] = n1
+        MOV AC0, dbl(*AR5(short(#2)))
+        MOV AC3, dbl(*AR5)
+
+        POPBOTH XAR6
+        POPBOTH XAR5
+        RET
+;*******************************************************************************
+; void gostdecrypt(word32 const *in, word32 const *k81,
+;                  word32 *out, word32 const *key)
+;
+; Decryption algorithm GOST 28147 in simple replacement mode
+;*******************************************************************************
+        .newblock
+        .global _gostdecrypt
+_gostdecrypt:
+        PSHBOTH XAR5
+        PSHBOTH XAR6
+        MOV XAR2, XAR5
+        MOV XAR3, XAR6
+        NOP
+        NOP
+        NOP
+        AMAR *AR1(#256), XAR2
+        AMAR *AR2(#256), XAR3
+        AMAR *AR3(#256), XAR4
+
+        MOV dbl(*AR0), AC0
+        MOV AC0, dbl(*AR5)
+        MOV dbl(*AR0(short(#2))), AC3
+
+        ;n2 ^= f(n1+key[0]);
+        ADD dbl(*AR6), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[1]);
+        ADD dbl(*AR6(#2)), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[2]);
+        ADD dbl(*AR6(short(#4))), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[3]);
+        ADD dbl(*AR6(short(#6))), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[4]);
+        ADD dbl(*AR6(#8)), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[5]);
+        ADD dbl(*AR6(#10)), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;n2 ^= f(n1+key[6]);
+        ADD dbl(*AR6(#12)), AC0
+        __F_BASE__
+        XOR AC2, AC3
+        ;n1 ^= f(n2+key[7]);
+        ADD dbl(*AR6(#14)), AC3, AC0
+        __F_BASE__
+        MOV dbl(*AR5), AC0
+        XOR AC2, AC0
+        MOV AC0, dbl(*AR5)
+        ;-----------------------------------------------------------------------
+        MOV #2, BRC0
+        RPTB end_block?-1
+         ; n2 ^= f(n1+key[7])
+         ADD dbl(*AR6(#14)), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ; n1 ^= f(n2+key[6])
+         ADD dbl(*AR6(#12)), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ; n2 ^= f(n1+key[5])
+         ADD dbl(*AR6(#10)), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[4])
+         ADD dbl(*AR6(#8)), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ;n2 ^= f(n1+key[3])
+         ADD dbl(*AR6(short(#6))), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[2])
+         ADD dbl(*AR6(short(#4))), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+         ;n2 ^= f(n1+key[1])
+         ADD dbl(*AR6(short(#2))), AC0
+         __F_BASE__
+         XOR AC2, AC3
+         ;n1 ^= f(n2+key[0])
+         ADD dbl(*AR6), AC3, AC0
+         __F_BASE__
+         MOV dbl(*AR5), AC0
+         XOR AC2, AC0
+         MOV AC0, dbl(*AR5)
+end_block?:
+        ;-----------------------------------------------------------------------
+        ;out[0] = n2
+        ;out[1] = n1
+        MOV AC0, dbl(*AR5(short(#2)))
+        MOV AC3, dbl(*AR5)
+
+        POPBOTH XAR6
+        POPBOTH XAR5
+        RET
+;*******************************************************************************
+; void kboxinit(char *p81, unsigned char const *subst_table)
+;
+; Initialization of the lookup table
+;*******************************************************************************
+        .newblock
+        .global _kboxinit
+_kboxinit:
+        MOV #0, AC0
+        MOV #255, BRC0
+        MOV #2, BRC1
+        RPTBLOCAL #end_block?-1
+         ; k87[i] = k8[i >> 4] << 4 | k7[i & 15]
+         BFXTR #0x00F0, AC0, T0
+         AMAR *AR1(T0), XAR4
+         MOV *AR4<<#4, AC1
+         AND #0x0F, AC0, T0
+         ADD #16, T0
+         AMAR *AR1(T0), XAR2
+         OR *AR2, AC1
+         MOV XAR0, XAR3
+         MOV AC1, *AR0+
+         ; k65[i] = k6[i >> 4] << 4 | k5[i & 15]
+         ; k43[i] = k4[i >> 4] << 4 | k3[i & 15];
+         ; k21[i] = k2[i >> 4] << 4 | k1[i & 15];
+         RPTBLOCAL #end_int_block?-1
+          MOV *+AR4(#32)<<#4, AC1
+          OR *+AR2(#32), AC1
+          MOV AC1, *+AR3(#256)
+end_int_block?:
+         ADD #1, AC0
+end_block?:
+        RET
+
+        .end

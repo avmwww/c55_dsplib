@@ -2,6 +2,7 @@
 ; FFT implementation for Texas DSP TMS320C55x
 ; 11/14/2002
 ; Andrey Mitrofanov
+; <avmwww@gmail.com>
 ; Speech Technology Center
 ;*******************************************************************************
 ; Buffers must be aligned by the number of elements
